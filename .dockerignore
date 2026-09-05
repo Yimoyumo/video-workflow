@@ -1,0 +1,7 @@
+models/
+output/
+input/
+user/
+*.tar
+*.tar.gz
+.env

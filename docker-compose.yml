@@ -1,0 +1,93 @@
+# ============================================================
+# 双卡 4090 运行模式（.env 中 COMPOSE_PROFILES 切换，默认 dual）
+#
+#   dual  : 双实例各占一卡（端口 8188 / 8189），单条速度不变、
+#           批量吞吐 ×2 —— 快速档（lightx2v, cfg=1）工作流用这个
+#   split : 单实例占双卡，工作流中插入内置 MultiGPU CFG Split 节点，
+#           质量档（cfg>1）单条视频提速 ~1.9×
+# ============================================================
+
+x-image: &comfy-image
+  image: ${IMAGE_TAG:-crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/vedio_woekflow:v0.34.0-cu126-4090x2}
+  build:
+    context: .
+    args:
+      COMFYUI_VERSION: ${COMFYUI_VERSION:-v0.34.0}
+      # GIT_PREFIX: https://gh-proxy.com/https://github.com/   # 国内网络用
+      # PIP_INDEX_URL: https://pypi.org/simple                 # 海外网络用
+
+services:
+  # ---------- dual 模式：实例 A（GPU 0，主创作） ----------
+  comfyui-a:
+    <<: *comfy-image
+    profiles: ["dual"]
+    container_name: comfyui-gpu0
+    ports:
+      - "8188:8188"
+    environment:
+      - PORT=8188
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - COMFY_EXTRA_ARGS=${COMFY_EXTRA_ARGS:-}
+    volumes:
+      - ./models:/opt/ComfyUI/models
+      - ./input:/opt/ComfyUI/input
+      - ./output:/opt/ComfyUI/output
+      - ./state/instance-a:/opt/ComfyUI/user   # 用户状态互相隔离
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  # ---------- dual 模式：实例 B（GPU 1，第二工作流/批量抽卡） ----------
+  comfyui-b:
+    <<: *comfy-image
+    profiles: ["dual"]
+    container_name: comfyui-gpu1
+    ports:
+      - "8189:8189"
+    environment:
+      - PORT=8189
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - COMFY_EXTRA_ARGS=${COMFY_EXTRA_ARGS:-}
+    volumes:
+      - ./models:/opt/ComfyUI/models
+      - ./input:/opt/ComfyUI/input
+      - ./output:/opt/ComfyUI/output
+      - ./state/instance-b:/opt/ComfyUI/user
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+
+  # ---------- split 模式：单实例双卡（配合 MultiGPU CFG Split 节点） ----------
+  comfyui-combined:
+    <<: *comfy-image
+    profiles: ["split"]
+    container_name: comfyui-dual
+    ports:
+      - "8188:8188"
+    environment:
+      - PORT=8188
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - COMFY_EXTRA_ARGS=${COMFY_EXTRA_ARGS:-}
+    volumes:
+      - ./models:/opt/ComfyUI/models
+      - ./input:/opt/ComfyUI/input
+      - ./output:/opt/ComfyUI/output
+      - ./state/combined:/opt/ComfyUI/user
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1"]
+              capabilities: [gpu]
