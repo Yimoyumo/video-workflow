@@ -162,17 +162,28 @@ docker push crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/
 推 ACR」。构建机在阿里云国内，推 ACR 走内网秒级。适合在意「坏镜像不能推出去」
 这道闸门的情况；免费额度对单人使用足够（有并发/时长限制，构建 10–20 分钟无压力）。
 
-### 方案 C（兜底）：服务器本地构建
+### 方案 C（当前主路径）：ECS / 服务器上构建
 
-最简单可靠，适合单机：服务器上 `git pull && docker compose build`（可包成脚本或
-cron）。构建在本机完成没有传输，还能顺手做真 GPU 冒烟。缺点是构建占用 GPU 机
-资源、多机部署时每台都要拉代码。
+推荐在阿里云 ECS（2核4G 起，磁盘余量 ≥25GB）上构建——阿里云网络下 pip/镜像拉推都是内网速度，且无构建时长限制：
 
-三种方案可组合：日常用 A，重要版本发布前在服务器上跑一次 C 做真 GPU 验证。
+```bash
+git clone https://github.com/Yimoyumo/video-workflow.git && cd video-workflow
+./scripts/build-on-ecs.sh        # 一键：磁盘检查 → 构建 → 推送 ACR
+```
+
+脚本自动处理：磁盘/swap 检查、ACR 登录校验、构建（断点续传）、推送。
+ECS 与 ACR 同地域时拉推走 VPC 内网，不占公网带宽。
+
+### 方案 D（兜底）：本机或任意机器构建后推送
+
+`docker build -t <ACR完整路径:tag> . && docker push`——Dockerfile 已内置
+断点续传/停滞熔断/双源兜底，弱网可磨穿，只是耗时随网络质量浮动。
 
 ## 常见问题
 
 - **下载 404**：模型仓库名或文件名有更新，去 `https://hf-mirror.com/Comfy-Org/Wan_2.2_ComfyUI_Repackaged` 核对。
+- **ACR 构建注意事项**：个人版构建超时 30 分钟（pip 慢导致超时可开「海外机器构建」）；
+  基础镜像支持同地域同账号的私有仓库（我们的 pytorch-base 满足）；「不使用缓存」保持关闭。
 - **Animate 工作流第一次跑很慢**：DWPose 姿态模型（约 400MB）在首跑时经 hf-mirror 自动下载，之后正常。
 - **anime_lora 报错缺 token**：Civitai 下载需登录令牌，见 `scripts/download_models.sh` 头部注释。
 - **构建时 git clone 失败**：加 `--build-arg GIT_PREFIX=https://gh-proxy.com/https://github.com/`。
