@@ -23,8 +23,11 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# gcc：Triton 首次运行要现场编译 C 模块（comfy_kitchen/sageattention 导入链）
+# libgl/libxcb 等：OpenCV wheel 的系统运行时依赖（无 GUI 服务器上必缺）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl wget \
+        git curl wget gcc \
+        libgl1 libglib2.0-0 libxcb1 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- L2: 固定版本的 ComfyUI + Manager ---
