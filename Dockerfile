@@ -4,9 +4,9 @@
 # 基础镜像保持 cu126：sm_89 完整支持，且同一镜像兼容 V100（sm_70），
 # 注意 CUDA 13 / cu13x 轮子已放弃 Volta，跨机型复用时不要升 cu13x
 # ============================================================
-ARG BASE_IMAGE=pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
-# ACR 上构建时改用转存后的基础镜像（转存完成后，注释上一行、取消下一行注释）:
-# ARG BASE_IMAGE=crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/pytorch-base:2.7.1-cu126-cudnn9
+# 基础镜像已转存至 ACR（构建机内网拉取，快且稳）；本地手动构建可临时改回
+# pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+ARG BASE_IMAGE=crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/pytorch-base:2.7.1-cu126-cudnn9
 
 FROM ${BASE_IMAGE}
 
