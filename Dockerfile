@@ -24,20 +24,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- L2: 固定版本的 ComfyUI + Manager ---
-# ComfyUI 用 codeload 压缩包获取（单次 HTTP 比 git clone 抗抖动），直连失败自动切 gh-proxy
+# 先下载到文件再解压（管道模式无法断点续传）；停滞检测：30 秒内低于 10KB/s 即断开重试；
+# gh-proxy 主用（国内稳定），失败切直连并断点续传
 WORKDIR /opt
 RUN set -eux; \
-    (curl -fL --retry 3 https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION} \
-     || curl -fL --retry 3 ${GH_PROXY}https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION}) \
-     | tar -xz -C /opt; \
+    curl -fL --retry 5 --retry-all-errors --speed-time 30 --speed-limit 10240 \
+      -o /tmp/comfyui.tar.gz \
+      ${GH_PROXY}https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION} \
+ || curl -fL --retry 5 --retry-all-errors --speed-time 30 --speed-limit 10240 -C - \
+      -o /tmp/comfyui.tar.gz \
+      https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION}; \
+    tar -xzf /tmp/comfyui.tar.gz -C /opt; \
     mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
+    rm /tmp/comfyui.tar.gz; \
     pip install --no-cache-dir -r ComfyUI/requirements.txt; \
     pip install --no-cache-dir -r ComfyUI/manager_requirements.txt
 
 # --- L3: 视频工作流常用节点 ---
 # VideoHelperSuite: 视频加载/帧拼接/保存 | KJNodes: 遮罩与 latent 工具
 # GGUF: 低比特量化模型支持 | controlnet_aux: DWPose 姿态提取（Wan2.2-Animate 必需）
-RUN git clone --depth 1 ${GH_PROXY}https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git \
+# 低速检测：git 传输 30 秒低于 10KB/s 即失败重跑（避免无限挂起）
+RUN export GIT_HTTP_LOW_SPEED_LIMIT=10240 GIT_HTTP_LOW_SPEED_TIME=30; \
+    git clone --depth 1 ${GH_PROXY}https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git \
         ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite \
  && git clone --depth 1 ${GH_PROXY}https://github.com/kijai/ComfyUI-KJNodes.git \
         ComfyUI/custom_nodes/ComfyUI-KJNodes \
