@@ -1,0 +1,77 @@
+# ============================================================
+# ComfyUI 视频工作流镜像 — 全海外源版本（配合代理使用）
+# 与主 Dockerfile 的差异：
+#   - pip 用 pypi.org 官方源（海外原生快）
+#   - GitHub 全部直连（不走 gh-proxy）
+#   - 基础镜像用 Docker Hub 官方源（本机已有该镜像缓存则秒过）
+# 构建: docker build --network=host -f Dockerfile.oversea -t <tag> .
+#   （--network=host 让 RUN 内可访问 127.0.0.1 的本机代理；
+#     代理 env 由 docker 自动从客户端注入）
+# ============================================================
+ARG BASE_IMAGE=pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+
+FROM ${BASE_IMAGE}
+
+# --- 可在 build 时覆盖的参数 ---
+ARG COMFYUI_VERSION=v0.34.0
+# 全海外直连，无需加速前缀；如需 gh-proxy 兜底:
+#   --build-arg GH_PROXY=https://gh-proxy.com/
+ARG GH_PROXY=
+# 海外官方 PyPI
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- L2: 固定版本的 ComfyUI + Manager ---
+# 先下载到文件再解压；停滞熔断 + 断点续传保留（代理抖动也不怕）
+WORKDIR /opt
+RUN set -eux; \
+    curl -fL --retry 5 --retry-all-errors --speed-time 30 --speed-limit 10240 \
+      -o /tmp/comfyui.tar.gz \
+      ${GH_PROXY}https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION}; \
+    tar -xzf /tmp/comfyui.tar.gz -C /opt; \
+    mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
+    rm /tmp/comfyui.tar.gz; \
+    pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
+      -r ComfyUI/requirements.txt; \
+    pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
+      -r ComfyUI/manager_requirements.txt
+
+# --- L3: 视频工作流常用节点 ---
+# VideoHelperSuite: 视频加载/帧拼接/保存 | KJNodes: 遮罩与 latent 工具
+# GGUF: 低比特量化模型支持 | controlnet_aux: DWPose 姿态提取（Wan2.2-Animate 必需）
+RUN export GIT_HTTP_LOW_SPEED_LIMIT=10240 GIT_HTTP_LOW_SPEED_TIME=30; \
+    git clone --depth 1 ${GH_PROXY}https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git \
+        ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite \
+ && git clone --depth 1 ${GH_PROXY}https://github.com/kijai/ComfyUI-KJNodes.git \
+        ComfyUI/custom_nodes/ComfyUI-KJNodes \
+ && git clone --depth 1 ${GH_PROXY}https://github.com/city96/ComfyUI-GGUF.git \
+        ComfyUI/custom_nodes/ComfyUI-GGUF \
+ && git clone --depth 1 ${GH_PROXY}https://github.com/Fannovel16/comfyui_controlnet_aux.git \
+        ComfyUI/custom_nodes/comfyui_controlnet_aux \
+ && for r in ComfyUI/custom_nodes/*/requirements.txt; do \
+        pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 -r "$r" \
+          || echo "skip $r"; \
+    done
+
+# --- L3.5: SageAttention（4090 sm_89 支持，配合 --use-sage-attention 提速 10-30%） ---
+RUN pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
+      sageattention==1.0.6 || echo "sageattention skipped"
+
+# --- L4: 预置工作流（烘焙进镜像；entrypoint 会同步到用户目录） ---
+COPY entrypoint.sh /entrypoint.sh
+COPY workflows/ /opt/baked_workflows/
+RUN chmod +x /entrypoint.sh
+
+VOLUME ["/opt/ComfyUI/models", "/opt/ComfyUI/user", "/opt/ComfyUI/input", "/opt/ComfyUI/output"]
+EXPOSE 8188
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+    CMD curl -sf http://127.0.0.1:8188/system_stats || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
