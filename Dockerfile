@@ -11,8 +11,9 @@ FROM ${BASE_IMAGE}
 
 # --- 可在 build 时覆盖的参数 ---
 ARG COMFYUI_VERSION=v0.34.0
-# 国内网络构建失败时改用: --build-arg GIT_PREFIX=https://gh-proxy.com/https://github.com/
-ARG GIT_PREFIX=https://github.com/
+# 构建机直连 GitHub 时通时断，默认走 gh-proxy 加速；直连稳定的网络可改回
+# https://github.com/
+ARG GIT_PREFIX=https://gh-proxy.com/https://github.com/
 # 国内网络可改用其他镜像源；清华源对数据中心 IP 可能 403，默认用阿里云源
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
