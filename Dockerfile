@@ -13,8 +13,8 @@ FROM ${BASE_IMAGE}
 ARG COMFYUI_VERSION=v0.34.0
 # 国内网络构建失败时改用: --build-arg GIT_PREFIX=https://gh-proxy.com/https://github.com/
 ARG GIT_PREFIX=https://github.com/
-# 国内网络可改用: --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# 国内网络可改用其他镜像源；清华源对数据中心 IP 可能 403，默认用阿里云源
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_DISABLE_PIP_VERSION_CHECK=1
