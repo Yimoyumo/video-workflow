@@ -11,9 +11,8 @@ FROM ${BASE_IMAGE}
 
 # --- 可在 build 时覆盖的参数 ---
 ARG COMFYUI_VERSION=v0.34.0
-# 构建机直连 GitHub 时通时断，默认走 gh-proxy 加速；直连稳定的网络可改回
-# https://github.com/
-ARG GIT_PREFIX=https://gh-proxy.com/https://github.com/
+# GitHub 加速前缀（gh-proxy），直连稳定的网络可改回空值: --build-arg GH_PROXY=
+ARG GH_PROXY=https://gh-proxy.com/
 # 国内网络可改用其他镜像源；清华源对数据中心 IP 可能 403，默认用阿里云源
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
@@ -25,22 +24,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- L2: 固定版本的 ComfyUI + Manager ---
+# ComfyUI 用 codeload 压缩包获取（单次 HTTP 比 git clone 抗抖动），直连失败自动切 gh-proxy
 WORKDIR /opt
-RUN git clone --depth 1 --branch ${COMFYUI_VERSION} \
-        ${GIT_PREFIX}Comfy-Org/ComfyUI.git ComfyUI \
-    && pip install --no-cache-dir -r ComfyUI/requirements.txt \
-    && pip install --no-cache-dir -r ComfyUI/manager_requirements.txt
+RUN set -eux; \
+    (curl -fL --retry 3 https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION} \
+     || curl -fL --retry 3 ${GH_PROXY}https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION}) \
+     | tar -xz -C /opt; \
+    mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
+    pip install --no-cache-dir -r ComfyUI/requirements.txt; \
+    pip install --no-cache-dir -r ComfyUI/manager_requirements.txt
 
 # --- L3: 视频工作流常用节点 ---
 # VideoHelperSuite: 视频加载/帧拼接/保存 | KJNodes: 遮罩与 latent 工具
 # GGUF: 低比特量化模型支持 | controlnet_aux: DWPose 姿态提取（Wan2.2-Animate 必需）
-RUN git clone --depth 1 ${GIT_PREFIX}Kosinkadink/ComfyUI-VideoHelperSuite.git \
+RUN git clone --depth 1 ${GH_PROXY}https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git \
         ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite \
- && git clone --depth 1 ${GIT_PREFIX}kijai/ComfyUI-KJNodes.git \
+ && git clone --depth 1 ${GH_PROXY}https://github.com/kijai/ComfyUI-KJNodes.git \
         ComfyUI/custom_nodes/ComfyUI-KJNodes \
- && git clone --depth 1 ${GIT_PREFIX}city96/ComfyUI-GGUF.git \
+ && git clone --depth 1 ${GH_PROXY}https://github.com/city96/ComfyUI-GGUF.git \
         ComfyUI/custom_nodes/ComfyUI-GGUF \
- && git clone --depth 1 ${GIT_PREFIX}Fannovel16/comfyui_controlnet_aux.git \
+ && git clone --depth 1 ${GH_PROXY}https://github.com/Fannovel16/comfyui_controlnet_aux.git \
         ComfyUI/custom_nodes/comfyui_controlnet_aux \
  && for r in ComfyUI/custom_nodes/*/requirements.txt; do \
         pip install --no-cache-dir -r "$r" || echo "skip $r"; \
