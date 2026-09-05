@@ -30,15 +30,17 @@ WORKDIR /opt
 RUN set -eux; \
     curl -fL --retry 5 --retry-all-errors --speed-time 30 --speed-limit 10240 \
       -o /tmp/comfyui.tar.gz \
-      ${GH_PROXY}https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION} \
+      https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION} \
  || curl -fL --retry 5 --retry-all-errors --speed-time 30 --speed-limit 10240 -C - \
       -o /tmp/comfyui.tar.gz \
-      https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION}; \
+      ${GH_PROXY}https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${COMFYUI_VERSION}; \
     tar -xzf /tmp/comfyui.tar.gz -C /opt; \
     mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
     rm /tmp/comfyui.tar.gz; \
-    pip install --no-cache-dir -r ComfyUI/requirements.txt; \
-    pip install --no-cache-dir -r ComfyUI/manager_requirements.txt
+    pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
+      -r ComfyUI/requirements.txt; \
+    pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
+      -r ComfyUI/manager_requirements.txt
 
 # --- L3: 视频工作流常用节点 ---
 # VideoHelperSuite: 视频加载/帧拼接/保存 | KJNodes: 遮罩与 latent 工具
@@ -54,11 +56,13 @@ RUN export GIT_HTTP_LOW_SPEED_LIMIT=10240 GIT_HTTP_LOW_SPEED_TIME=30; \
  && git clone --depth 1 ${GH_PROXY}https://github.com/Fannovel16/comfyui_controlnet_aux.git \
         ComfyUI/custom_nodes/comfyui_controlnet_aux \
  && for r in ComfyUI/custom_nodes/*/requirements.txt; do \
-        pip install --no-cache-dir -r "$r" || echo "skip $r"; \
+        pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 -r "$r" \
+          || echo "skip $r"; \
     done
 
 # --- L3.5: SageAttention（4090 sm_89 支持，配合 --use-sage-attention 提速 10-30%） ---
-RUN pip install --no-cache-dir sageattention==1.0.6 || echo "sageattention skipped"
+RUN pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
+      sageattention==1.0.6 || echo "sageattention skipped"
 
 # --- L4: 预置工作流（烘焙进镜像；entrypoint 会同步到用户目录） ---
 COPY entrypoint.sh /entrypoint.sh
