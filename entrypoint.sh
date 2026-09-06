@@ -14,6 +14,11 @@ if [ -n "${LIBCUDA_SO1}" ] && [ ! -f /usr/lib/x86_64-linux-gnu/libcuda.so ]; the
     ln -sf "${LIBCUDA_SO1}" /usr/lib/x86_64-linux-gnu/libcuda.so 2>/dev/null || true
 fi
 
+# v0.34 新增模型目录：缺失会使 DepthAnything3/SAM3D-body 等节点的 schema 构建 500
+for d in detection geometry_estimation optical_flow; do
+    mkdir -p "models/$d"
+done
+
 # 把烘焙进镜像的工作流同步到用户目录（卷挂载后首次启动时生效，不覆盖已有文件）
 mkdir -p user/default/workflows
 cp -n /opt/baked_workflows/* user/default/workflows/ 2>/dev/null || true
