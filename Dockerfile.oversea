@@ -1,5 +1,8 @@
 # ============================================================
 # ComfyUI 视频工作流镜像 — 全海外源版本（配合代理使用）
+# 目标 GPU: 单卡 RTX 5090 32GB（Blackwell sm_120）
+# 栈：ComfyUI v0.34.5 + pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime（Ubuntu 24.04）
+# （CUDA 13 不支持 V100；V100 需求走 cu126 旧版重建）
 # 与主 Dockerfile 的差异：
 #   - pip 用 pypi.org 官方源（海外原生快）
 #   - GitHub 全部直连（不走 gh-proxy）
@@ -8,12 +11,12 @@
 #   （--network=host 让 RUN 内可访问 127.0.0.1 的本机代理；
 #     代理 env 由 docker 自动从客户端注入）
 # ============================================================
-ARG BASE_IMAGE=pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+ARG BASE_IMAGE=pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
 
 FROM ${BASE_IMAGE}
 
 # --- 可在 build 时覆盖的参数 ---
-ARG COMFYUI_VERSION=v0.34.0
+ARG COMFYUI_VERSION=v0.34.5
 # 全海外直连，无需加速前缀；如需 gh-proxy 兜底:
 #   --build-arg GH_PROXY=https://gh-proxy.com/
 ARG GH_PROXY=
@@ -40,6 +43,8 @@ RUN set -eux; \
     tar -xzf /tmp/comfyui.tar.gz -C /opt; \
     mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
     rm /tmp/comfyui.tar.gz; \
+    # py3.12+ 环境下 comfy-kitchen==0.2.31 无轮子，顶到 0.2.33（cp312-abi3；v0.34.5 仍钉 0.2.31）
+    sed -i 's/comfy-kitchen==0.2.31/comfy-kitchen==0.2.33/' ComfyUI/requirements.txt; \
     pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
       -r ComfyUI/requirements.txt; \
     pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
@@ -62,7 +67,7 @@ RUN export GIT_HTTP_LOW_SPEED_LIMIT=10240 GIT_HTTP_LOW_SPEED_TIME=30; \
           || echo "skip $r"; \
     done
 
-# --- L3.5: SageAttention（4090 sm_89 支持，配合 --use-sage-attention 提速 10-30%） ---
+# --- L3.5: SageAttention（triton 实现；torch 2.12 + sm_120 组合需首跑验证） ---
 RUN pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
       sageattention==1.0.6 || echo "sageattention skipped"
 
