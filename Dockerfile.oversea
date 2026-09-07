@@ -15,6 +15,10 @@ ARG BASE_IMAGE=pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
 
 FROM ${BASE_IMAGE}
 
+# pytorch 2.12+ 官方镜像弃用 conda，改用 Ubuntu 系统 Python（PEP 668 externally-managed），
+# 不移除标记则一切裸 pip install 被拒；旧 conda 底座（2.7.1 系）无此限制
+RUN rm -f /usr/lib/python3*/EXTERNALLY-MANAGED
+
 # --- 可在 build 时覆盖的参数 ---
 ARG COMFYUI_VERSION=v0.34.5
 # 全海外直连，无需加速前缀；如需 gh-proxy 兜底:
