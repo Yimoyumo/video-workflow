@@ -1,16 +1,22 @@
 # ============================================================
-# ComfyUI AI 视频生成工作流镜像（目标 GPU: RTX 4090 24GB × 2 / Ada sm_89）
-# 基础镜像保持 cu126：sm_89 完整支持，且同一镜像兼容 V100（sm_70），
-# 注意 CUDA 13 / cu13x 轮子已放弃 Volta，跨机型复用时不要升 cu13x
+# ComfyUI AI 视频生成工作流镜像（目标 GPU: 单卡 RTX 5090 32GB / Blackwell sm_120）
+# 栈：ComfyUI v0.35.0 + pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
+#     （Ubuntu 24.04 底座，pytorch 官方 cu128/cu130 镜像全系 24.04）
+# 注意：CUDA 13 移除了 Volta——cu13x 镜像跑不了 V100；
+# 老 4090/V100 机器用旧 tag v0.34.0-cu126-4090x2
 # ============================================================
-# 基础镜像已转存至 ACR（构建机内网拉取，快且稳）；本地手动构建可临时改回
-# pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
-ARG BASE_IMAGE=crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/pytorch-base:2.7.1-cu126-cudnn9
+# 基础镜像已转存至 ACR（构建机内网拉取，快且稳）；转存方法见 README「基础镜像转存」。
+# 本地手动构建可临时改回 pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
+ARG BASE_IMAGE=crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/pytorch-base:2.12.1-cu130-cudnn9
 
 FROM ${BASE_IMAGE}
 
+# pytorch 2.12+ 官方镜像弃用 conda，改用 Ubuntu 系统 Python（PEP 668 externally-managed），
+# 不移除标记则一切裸 pip install 被拒；旧 conda 底座（2.7.1 系）无此限制
+RUN rm -f /usr/lib/python3*/EXTERNALLY-MANAGED
+
 # --- 可在 build 时覆盖的参数 ---
-ARG COMFYUI_VERSION=v0.34.0
+ARG COMFYUI_VERSION=v0.35.0
 # GitHub 加速前缀（gh-proxy），直连稳定的网络可改回空值: --build-arg GH_PROXY=
 ARG GH_PROXY=https://gh-proxy.com/
 # 国内网络可改用其他镜像源；清华源对数据中心 IP 可能 403，默认用阿里云源
@@ -28,7 +34,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- L2: 固定版本的 ComfyUI + Manager ---
 # 先下载到文件再解压（管道模式无法断点续传）；停滞检测：30 秒内低于 10KB/s 即断开重试；
-# gh-proxy 主用（国内稳定），失败切直连并断点续传
+# gh-proxy 主用（国内稳定），失败切直连并断点续传。
+# py3.12+ 环境下 comfy-kitchen==0.2.31 无轮子（仅 cp310/cp311），
+# 顶到 0.2.33（cp312-abi3 兼容 3.12/3.13/3.14；Comfy-Org 补丁版本，v0.34.5 仍钉 0.2.31）
 WORKDIR /opt
 RUN set -eux; \
     curl -fL --retry 5 --retry-all-errors --speed-time 30 --speed-limit 10240 \
@@ -40,6 +48,7 @@ RUN set -eux; \
     tar -xzf /tmp/comfyui.tar.gz -C /opt; \
     mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
     rm /tmp/comfyui.tar.gz; \
+    # v0.35.0 已升级 comfy-kitchen 至 0.2.33（cp312-abi3），无需 sed 补丁
     pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
       -r ComfyUI/requirements.txt; \
     pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
@@ -63,7 +72,8 @@ RUN export GIT_HTTP_LOW_SPEED_LIMIT=10240 GIT_HTTP_LOW_SPEED_TIME=30; \
           || echo "skip $r"; \
     done
 
-# --- L3.5: SageAttention（4090 sm_89 支持，配合 --use-sage-attention 提速 10-30%） ---
+# --- L3.5: SageAttention（triton 实现；torch 2.12 + sm_120 组合需首跑验证，
+#      报错就不开 --use-sage-attention，不影响其他功能） ---
 RUN pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
       sageattention==1.0.6 || echo "sageattention skipped"
 

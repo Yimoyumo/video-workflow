@@ -1,7 +1,7 @@
 # ============================================================
 # ComfyUI 视频工作流镜像 — 全海外源版本（配合代理使用）
 # 目标 GPU: 单卡 RTX 5090 32GB（Blackwell sm_120）
-# 栈：ComfyUI v0.34.5 + pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime（Ubuntu 24.04）
+# 栈：ComfyUI v0.35.0 + pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime（Ubuntu 24.04）
 # （CUDA 13 不支持 V100；V100 需求走 cu126 旧版重建）
 # 与主 Dockerfile 的差异：
 #   - pip 用 pypi.org 官方源（海外原生快）
@@ -20,7 +20,7 @@ FROM ${BASE_IMAGE}
 RUN rm -f /usr/lib/python3*/EXTERNALLY-MANAGED
 
 # --- 可在 build 时覆盖的参数 ---
-ARG COMFYUI_VERSION=v0.34.5
+ARG COMFYUI_VERSION=v0.35.0
 # 全海外直连，无需加速前缀；如需 gh-proxy 兜底:
 #   --build-arg GH_PROXY=https://gh-proxy.com/
 ARG GH_PROXY=
@@ -47,8 +47,7 @@ RUN set -eux; \
     tar -xzf /tmp/comfyui.tar.gz -C /opt; \
     mv /opt/ComfyUI-${COMFYUI_VERSION#v} /opt/ComfyUI; \
     rm /tmp/comfyui.tar.gz; \
-    # py3.12+ 环境下 comfy-kitchen==0.2.31 无轮子，顶到 0.2.33（cp312-abi3；v0.34.5 仍钉 0.2.31）
-    sed -i 's/comfy-kitchen==0.2.31/comfy-kitchen==0.2.33/' ComfyUI/requirements.txt; \
+    # v0.35.0 已升级 comfy-kitchen 至 0.2.33（cp312-abi3），无需 sed 补丁
     pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
       -r ComfyUI/requirements.txt; \
     pip install --no-cache-dir --timeout 60 --retries 10 --resume-retries 10 \
