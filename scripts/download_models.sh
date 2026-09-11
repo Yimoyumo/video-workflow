@@ -25,13 +25,15 @@ R21="Comfy-Org/Wan_2.1_ComfyUI_repackaged"
 stage_smoke() {
     dl "$R21" split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors models/diffusion_models
     dl "$R21" split_files/vae/wan_2.1_vae.safetensors models/vae
-    dl "$R22" split_files/text_encoders/umt5_xxl_fp8_scaled.safetensors models/text_encoders
+    # 文本编码器在 R22 仓库里的真实文件名带 e4m3fn（fp16/fp8_e4m3fn_scaled 两种），写成 umt5_xxl_fp8 会 404
+    dl "$R22" split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors models/text_encoders
 }
 
 # 主力：Wan 2.2 14B 文生视频 fp8（约 36GB），V100 32GB 显存可全量驻留
 stage_t2v() {
-    dl "$R22" split_files/text_encoders/umt5_xxl_fp8_scaled.safetensors models/text_encoders
-    dl "$R22" split_files/vae/wan_2.2_vae.safetensors models/vae
+    dl "$R22" split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors models/text_encoders
+    # 14B 系列用 wan_2.1_vae（wan2.2_vae 只有 TI2V-5B 用）
+    dl "$R22" split_files/vae/wan_2.1_vae.safetensors models/vae
     dl "$R22" split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors models/diffusion_models
     dl "$R22" split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors models/diffusion_models
 }

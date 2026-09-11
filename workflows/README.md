@@ -11,7 +11,7 @@
 | 文件名 | 用途 | 模式 | 基础模板 / 改法 |
 |---|---|---|---|
 | `wan22_i2v_anime.json` | 主力：首帧→动画 | dual 快速迭代 | 模板库 → Wan2.2 i2v 14B + Anime Style LoRA（低噪侧）+ lightx2v，steps 8 |
-| `wan22_i2v_anime_quality.json` | 主力：定稿精出 | split + CFG Split | 同上去掉 lightx2v，cfg 3.5，分辨率 720p |
+| `wan22_i2v_anime_quality.json` | 主力：定稿精出 | split + CFG Split | **✅ 已固化**（API 格式，720p×81 帧、cfg 3.5、20 步 0-10/10-20 双专家，带尾帧提取）。Anime Style LoRA 拿到后在 UNETLoader 与 CFG Split **之间**插 LoraLoader（CFG Split 必须是模型链最后一环）。LoadImage 默认文件本机没有属正常，在 UI 里上传段首帧即可 |
 | `wan22_flf_anime.json` | 两张关键帧补中间动画 | 按档位 | Wan2.2 i2v 首尾帧模板 + Anime LoRA |
 | `wan22_animate.json` | 角色动作迁移（角色图+参考视频） | dual | 模板库 → Wan2.2 Animate；首跑自动下载 DWPose 姿态模型 |
 | `wan21_smoke.json` | 冒烟测试 | 任意 | 模板库 → Video → Wan2.1 t2v 1.3B |

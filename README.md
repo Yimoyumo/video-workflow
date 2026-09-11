@@ -1,60 +1,56 @@
-# ComfyUI 视频工作流镜像（2× RTX 4090 定版）
+# ComfyUI 视频工作流镜像（单卡 RTX 5090 定版）
 
 构建一个自带视频生成环境的 ComfyUI Docker 镜像：固定版本代码 + 视频节点 + 预置工作流，
-模型走挂载卷。同一镜像兼容 4090（sm_89）与 V100（sm_70），两种 GPU 机器均可直接部署。
+模型走挂载卷。目标硬件：**单卡 NVIDIA RTX 5090（32GB / Blackwell sm_120）+ 90GB 内存**。
 
 ## 硬件适配结论
 
 | 决策 | 原因 |
 |---|---|
-| 基础镜像 `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime` | cu126 轮子同时覆盖 4090（sm_89）与 V100（sm_70），一套镜像跨机型复用；CUDA 13 已移除 Volta，跨机型时不要升 cu13x |
-| 主力模型 **Wan 2.2 14B fp8**（t2v + i2v） | 4090 有 fp8 tensor core，fp8_scaled 模型原生计算（V100 则自动转 fp16 计算）；24GB 装不下双专家全量也无妨，ComfyUI 在高/低噪两阶段间自动换入换出（本就串行使用） |
-| 镜像内置 SageAttention 1.0.6 | 配合 `--use-sage-attention` 在 4090 上提速 10–30%，默认关闭 |
-| 双卡不开双实例时才用 CFG Split | ComfyUI 内置 MultiGPU CFG Split 节点：同构卡（4090×2 ✓）+ cfg>1 时，单条视频最高 ~1.9× 加速 |
+| 基础镜像 `pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime`（ACR 转存为 `pytorch-base:2.12.1-cu130-cudnn9`） | Blackwell sm_120 需要 cu128+，cu126 轮子没有 5090 内核；cu130 + torch 2.12.1；pytorch 官方 cu128/cu130 镜像全系 Ubuntu 24.04 底座。CUDA 13 移除了 Volta——**V100 已出局**（旧 tag `v0.34.0-cu126-4090x2` 仍可跑 4090/V100 老机器） |
+| 主力模型 **Wan 2.2 14B fp8**（t2v + i2v） | 5090 原生 fp8 tensor core；32GB 显存下双专家（约 30GB）接近全驻留，步数边界基本免换卡；90GB 内存非常充裕 |
+| 镜像内置 SageAttention 1.0.6 | triton 实现；torch 2.9 + sm_120 组合**需首跑验证**，启动日志出现 "Using sage attention" 才算生效，报错就先不开 |
+| CFG Split 随双卡方案退役 | 单卡无 CFG Split；质量档=全量步数，快速档=lightx2v 4 步 LoRA（预置工作流已同步更新） |
 
-## 双卡运行模式（核心设计）
+## 运行模式
 
-| 模式 | 启动命令 | 形态 | 适用 |
-|---|---|---|---|
-| **dual**（默认） | `docker compose up -d` | 双实例各占一卡，端口 8188 / 8189，模型卷共享、用户状态隔离 | 快速档工作流（lightx2v，cfg=1）——CFG Split 对 cfg=1 无效，靠双实例提吞吐 |
-| **split** | `docker compose --profile split up -d` | 单实例占双卡 | 质量档工作流（cfg 3.5）：在模型加载链与采样器之间插入内置 `MultiGPU CFG Split` 节点（max_gpus=2），单条 720p 从 15–30 分钟压到 8–15 分钟 |
+单实例单卡，端口 8188，`docker compose up -d` 即可，没有模式切换。
+质量档和快速档的区别在**工作流**而不是部署：两版工作流都已预置。
 
-两种模式互斥（GPU 分配冲突），用 `.env` 里 `COMPOSE_PROFILES` 或命令行 `--profile` 切换。
-推荐把「质量版工作流（带 CFG Split）」和「快速版工作流」都固化进镜像，按需选模式。
-
-## 性能预期（Wan 2.2 14B fp8，81 帧 5 秒）
+## 性能预期（Wan 2.2 14B fp8，81 帧 5 秒 @16fps；5090 按 4090 的 ~1.5 倍估算）
 
 | 配置 | 480p | 720p |
 |---|---|---|
-| dual 模式单实例（≈1×4090）质量档 | 5–8 分钟 | 15–30 分钟 |
-| dual 模式两条并行（吞吐 ×2） | 每条 5–8 分钟 | 每条 15–30 分钟 |
-| split 模式 CFG Split 质量档 | 3–5 分钟 | 8–15 分钟 |
-| 快速档（lightx2v 8 步） | 1–2 分钟 | 2–5 分钟 |
+| 质量档（全量 20 步） | 3-6 分钟 | 10-18 分钟 |
+| 快速档（lightx2v 4 步，cfg 1） | <1 分钟 | 1.5-3 分钟 |
 
 ## 目录结构
 
 ```
 comfyui-video/
 ├── Dockerfile               # 四层镜像：基础环境→ComfyUI→视频节点→工作流
-├── docker-compose.yml       # dual/split 双模式、GPU 绑定、健康检查
-├── .env.example             # 构建与运行参数（复制为 .env）
+├── docker-compose.yml       # 单实例单卡、GPU 绑定（镜像健康检查继承自 Dockerfile）
+├── .env.example             # 构建/运行参数（复制为 .env）
+├── pytorch-base/Dockerfile  # 一行 FROM：ACR 海外构建转存基础镜像用
 ├── entrypoint.sh            # 启动脚本（同步预置工作流→启动服务）
 ├── workflows/               # 你的工作流 JSON，烘焙进镜像
 └── scripts/
     └── download_models.sh   # 模型下载（hf-mirror，断点续传）
 ```
 
-## 使用步骤（在 2×4090 服务器上）
+## 使用步骤（在 5090 服务器上）
 
 ```bash
 # 0. 前置（仅首次）：安装 nvidia-container-toolkit 并重启 docker
 #    https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
 
-# 1. 构建镜像（国内网络加: --build-arg GIT_PREFIX=https://gh-proxy.com/https://github.com/）
-docker compose build
+# 1. 镜像：构建在 ACR 控制台进行（本机与服务器都不构建）。
+#    首次换基础镜像前先做「基础镜像转存」（见下方方案 A），然后 ACR 海外构建主镜像。
+#    服务器上只拉取：
+docker compose pull
 
 # 2. 下载模型（支持断点续传；先只下 smoke 套件可快速冒烟）
-./scripts/download_models.sh smoke      # Wan2.1 1.3B，先跑通
+./scripts/download_models.sh smoke      # Wan2.1 1.3B + 文本编码器 + VAE，先跑通
 ./scripts/download_models.sh i2v        # Wan2.2 14B 图生视频（2D 动画主力，必下）
 ./scripts/download_models.sh t2v        # Wan2.2 14B 文生视频（可选）
 ./scripts/download_models.sh animate    # Wan2.2-Animate 动作迁移全套（2D 动画）
@@ -63,25 +59,24 @@ docker compose build
 export CIVITAI_TOKEN=<你的令牌> ANIME_LORA_URL=<模型页下载链接>
 ./scripts/download_models.sh anime_lora
 
-# 3. 启动（默认 dual 模式：8188 主创作 + 8189 第二工作流）
+# 3. 启动
 docker compose up -d
-docker compose logs -f comfyui-a     # 看到 "To see the GUI go to" 即成功
+docker compose logs -f comfyui      # 看到 "To see the GUI go to" 即成功
 ```
 
 ## 首次验证流程
 
-1. **冒烟**：8188 → 模板库 → Video → Wan 2.1 1.3B t2v → Queue。
-2. **主力**：模板库 → Video → Wan 2.2 t2v 14B → Queue，480p×81 帧先验证。
-3. **双卡验证**：质量工作流插入 MultiGPU CFG Split 节点后切 split 模式跑一次，
-   对比时间应接近减半；快速工作流在 8188/8189 各排一条任务，确认并行。
-4. 加速：挂 lightx2v LoRA（steps 8、cfg 1），速度提升 3–5 倍。
+1. **冒烟**：模板库 → Video → Wan 2.1 1.3B t2v → Queue。
+2. **主力**：模板库 → Video → Wan 2.2 i2v 14B → Queue，480p×81 帧先验证。
+3. **两档对比**：预置的快速档与质量档工作流各跑一条，记录时间差；顺手验证
+   `--use-sage-attention`（先关跑一条，再开跑一条，报错即关闭）。
 
 ## 2D 动画生产管线（本镜像的主场景)
 
 ```
 ① 关键帧        手绘 / 动漫图像模型生成首帧（可选尾帧）
-② 动起来        Wan2.2 14B i2v + Anime Style LoRA + lightx2v 快速抽卡（dual 双实例）
-③ 定稿          去掉加速 LoRA，cfg 3.5 + CFG Split 精出（split 模式，720p）
+② 动起来        Wan2.2 14B i2v + Anime Style LoRA + lightx2v 快速抽卡（快速档）
+③ 定稿          去掉加速 LoRA，cfg 3.5 全量步数精出（质量档，720p）
 ④ 表演级动作    Wan2.2-Animate：角色图 + 参考视频 → 复刻表情与动作（含重光照）
 ⑤ 后处理        RIFE 插帧（原生节点，models/frame_interpolation）
 ```
@@ -97,15 +92,12 @@ docker compose logs -f comfyui-a     # 看到 "To see the GUI go to" 即成功
 在 UI 里把工作流调好后：
 
 ```bash
-# 1. 导出 JSON 到 workflows/（如 wan22_t2v_14b_cfgsplit.json、wan22_t2v_fast.json）
-# 2. 重建并打版本 tag
-docker compose build
-docker tag comfyui-video:v0.34.0-cu126-4090x2 comfyui-video:v1.0-wan22
-# 3a. 有 registry 就推送
-docker push <registry>/comfyui-video:v1.0-wan22
-# 3b. 没有 registry 就导出文件分发（压缩后约 4–4.5GB，解压态 9–11GB）
-docker save comfyui-video:v1.0-wan22 | gzip > comfyui-video-v1.0.tar.gz
-# 目标机: docker load < comfyui-video-v1.0.tar.gz
+# 1. 导出 JSON 到 workflows/ 并 commit
+# 2. push 到 GitHub → ACR「海外机器构建」出镜像（tag 在 ACR 构建规则里定，如 v1.0-wan22）
+# 3. 服务器: docker compose pull 更新
+# 兜底（ACR 不可达的目标机）：在能登录 ACR 的机器上导出文件分发
+docker save <ACR完整路径:tag> | gzip > comfyui-video.tar.gz
+# 目标机: docker load < comfyui-video.tar.gz
 ```
 
 之后任何机器：导入镜像 → `docker compose up -d` → 挂 `models/` 卷即用。
@@ -128,7 +120,7 @@ curl -X POST http://127.0.0.1:8189/prompt -H 'Content-Type: application/json' \
 GitHub 侧**无需启用 Actions**（备用 workflow 已存为
 `.github/workflows/docker-build.yml.off`，想用 GitHub 构建时把后缀改回 `.yml` 即可）。
 
-### 方案 A（推荐）：ACR 个人版自带的「镜像构建」
+### 方案 A（主路径）：ACR 个人版自带的「镜像构建」
 
 不引入任何额外服务，ACR 仓库自带代码源绑定和自动构建：
 
@@ -137,20 +129,15 @@ GitHub 侧**无需启用 Actions**（备用 workflow 已存为
    标签生成「分支名-提交ID短格式」，勾选**代码变更时自动构建**
 3. 之后 push 到 GitHub 即自动构建出镜像，服务器 `docker compose pull` 更新
 
-**基础镜像转存（建议做）**：ACR 构建机拉取 Docker Hub 基础镜像可能慢或不稳，
-先把它转存进你的 ACR（在 ACR 控制台先建仓库 `pytorch-base`，然后任意一台能
-访问 Docker Hub 的机器执行）：
+**基础镜像转存（首次换 cu130 基础镜像时必做）**：ACR 构建机直拉 Docker Hub
+慢且不稳，用 ACR 自己转存自己——仓库里已备好一行 Dockerfile
+（`pytorch-base/Dockerfile`，内容就是 `FROM pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime`）：
 
-```bash
-# 登录你的个人版实例（用户名/固定密码见 ACR 控制台「访问凭证」）
-docker login crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com
-
-docker pull pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
-docker tag pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime \
-  crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/pytorch-base:2.7.1-cu126-cudnn9
-docker push crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/pytorch-base:2.7.1-cu126-cudnn9
-# 然后把 Dockerfile 里 ARG BASE_IMAGE 换成上述 ACR 地址（文件里已备好注释行）
-```
+1. ACR 控制台先建仓库 `pytorch-base`
+2. 该仓库 → 构建 → 绑定同一代码源，添加规则：分支 `main`、
+   Dockerfile 路径 `pytorch-base/Dockerfile`、tag `2.12.1-cu130-cudnn9`
+3. 触发「海外机器构建」→ `pytorch-base:2.12.1-cu130-cudnn9` 进入你的 ACR
+4. 主 Dockerfile 的 `BASE_IMAGE` 默认已指向它，正常构建主镜像即可
 
 局限：ACR 构建只有构建动作，**没有冒烟测试环节**——首次出镜像后手动
 `docker compose up -d` 看 logs 确认即可（后续版本基本不会坏构建）。
@@ -162,7 +149,7 @@ docker push crpi-9pf9lin5vvnxq7uh.cn-hangzhou.personal.cr.aliyuncs.com/ininyumo/
 推 ACR」。构建机在阿里云国内，推 ACR 走内网秒级。适合在意「坏镜像不能推出去」
 这道闸门的情况；免费额度对单人使用足够（有并发/时长限制，构建 10–20 分钟无压力）。
 
-### 方案 C（当前主路径）：ECS / 服务器上构建
+### 方案 C（备用）：ECS / 服务器上构建
 
 推荐在阿里云 ECS（2核4G 起，磁盘余量 ≥25GB）上构建——阿里云网络下 pip/镜像拉推都是内网速度，且无构建时长限制：
 
@@ -187,6 +174,9 @@ ECS 与 ACR 同地域时拉推走 VPC 内网，不占公网带宽。
 - **Animate 工作流第一次跑很慢**：DWPose 姿态模型（约 400MB）在首跑时经 hf-mirror 自动下载，之后正常。
 - **anime_lora 报错缺 token**：Civitai 下载需登录令牌，见 `scripts/download_models.sh` 头部注释。
 - **构建时 git clone 失败**：加 `--build-arg GIT_PREFIX=https://gh-proxy.com/https://github.com/`。
-- **CFG Split 没有加速**：检查工作流 cfg 是否 >1（lightx2v 等 cfg=1 工作流无效）、两卡是否同型号、节点是否放在模型链最后一级与采样器之间。
-- **两实例抢显存/模型重复加载**：正常现象（每卡各一份），fp8 双专家 24GB 可承载；如 OOM 再 `--lowvram`。
-- **页面打不开但容器健康**：确认安全组/防火墙放行 8188、8189 端口。
+- **5090 上开 SageAttention 报错**：torch 2.9 + sm_120 组合未充分验证，报错就把
+  `.env` 的 `COMFY_EXTRA_ARGS` 清空（sage 只是提速项，不影响出片）。
+- **老 4090 / V100 机器**：继续用旧 tag `v0.34.0-cu126-4090x2`（cu126 覆盖
+  sm_89/sm_70）；cu13x 镜像跑不了 V100。
+- **页面打不开但容器健康**：确认安全组/防火墙放行 8188 端口；ComfyUI 无鉴权，
+  建议只走 SSH 隧道或安全组限源 IP，不要裸暴露公网。
